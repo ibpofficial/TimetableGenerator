@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IBP Timetable Generator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <div class="logo">IBP</div>
+      <div class="title-group">
+        <h1>IBP Timetable Generator</h1>
+        <p class="subtitle">Smart, constraint-aware scheduling for Higher Education</p>
+      </div>
+    </div>
+    <nav class="actions">
+      <button id="btnLoadConfig" class="ghost">Load</button>
+      <button id="btnSaveConfig" class="ghost">Save</button>
+      <button id="btnReset" class="danger ghost">Reset</button>
+    </nav>
+  </header>
+
+  <main class="container">
+    <aside class="sidebar">
+      <ol id="stepsList" class="steps">
+        <li data-step="1" class="active">Institution & Time</li>
+        <li data-step="2">Batches</li>
+        <li data-step="3">Faculties</li>
+        <li data-step="4">Subjects</li>
+        <li data-step="5">Fixed & Breaks</li>
+        <li data-step="6">Review & Generate</li>
+        <li data-step="7">Results</li>
+      </ol>
+      <div class="tip">
+        <strong>Tip:</strong> You can save and load your setup anytime.
+      </div>
+    </aside>
+
+    <section class="content">
+      <!-- STEP 1 -->
+      <section class="step" data-step="1">
+        <h2>Step 1 — Institution & Time Settings</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>Days of Instruction</h3>
+            <div class="days">
+              <label><input type="checkbox" class="dayCheck" value="Mon" checked> Mon</label>
+              <label><input type="checkbox" class="dayCheck" value="Tue" checked> Tue</label>
+              <label><input type="checkbox" class="dayCheck" value="Wed" checked> Wed</label>
+              <label><input type="checkbox" class="dayCheck" value="Thu" checked> Thu</label>
+              <label><input type="checkbox" class="dayCheck" value="Fri" checked> Fri</label>
+              <label><input type="checkbox" class="dayCheck" value="Sat"> Sat</label>
+            </div>
+            <div class="row">
+              <label>Start time
+                <input type="time" id="startTime" value="09:00">
+              </label>
+              <label>End time
+                <input type="time" id="endTime" value="17:00">
+              </label>
+            </div>
+            <div class="row">
+              <label>Slot length (minutes)
+                <input type="number" id="slotLength" min="15" step="5" value="60">
+              </label>
+              <label>Max classes per day (per batch)
+                <input type="number" id="maxClassesPerDay" min="1" value="6">
+              </label>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Infrastructure</h3>
+            <div class="row">
+              <label># Theory Classrooms
+                <input type="number" id="numTheoryRooms" min="1" value="4">
+              </label>
+              <label># Labs (for Practicals)
+                <input type="number" id="numLabs" min="0" value="2">
+              </label>
+            </div>
+            <div class="row">
+              <label>Room Prefix (Theory)
+                <input type="text" id="theoryPrefix" value="T">
+              </label>
+              <label>Room Prefix (Lab)
+                <input type="text" id="labPrefix" value="L">
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="primary next">Next</button>
+        </div>
+      </section>
+
+      <!-- STEP 2 -->
+      <section class="step" data-step="2" hidden>
+        <h2>Step 2 — Batches</h2>
+        <div class="card">
+          <div class="row">
+            <label>Batch name
+              <input type="text" id="batchNameInput" placeholder="e.g., CSE-3A">
+            </label>
+            <button id="addBatch" class="secondary">Add Batch</button>
+          </div>
+          <div id="batchesList" class="chips"></div>
+        </div>
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+          <button class="primary next">Next</button>
+        </div>
+      </section>
+
+      <!-- STEP 3 -->
+      <section class="step" data-step="3" hidden>
+        <h2>Step 3 — Faculties</h2>
+        <div class="card">
+          <div class="row">
+            <label>Faculty name
+              <input type="text" id="facultyNameInput" placeholder="e.g., Dr. A. Sharma">
+            </label>
+            <label>Avg. leaves / month
+              <input type="number" id="facultyLeavesInput" min="0" value="1">
+            </label>
+            <button id="addFaculty" class="secondary">Add Faculty</button>
+          </div>
+          <div id="facultiesList" class="cards"></div>
+        </div>
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+          <button class="primary next">Next</button>
+        </div>
+      </section>
+
+      <!-- STEP 4 -->
+      <section class="step" data-step="4" hidden>
+        <h2>Step 4 — Subjects (per Batch)</h2>
+        <div class="card">
+          <div class="row">
+            <label>Batch
+              <select id="subjectBatch"></select>
+            </label>
+            <label>Subject name
+              <input type="text" id="subjectName" placeholder="e.g., Data Structures">
+            </label>
+            <label>Type
+              <select id="subjectType">
+                <option value="theory">Theory</option>
+                <option value="practical">Practical</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <label>Classes per week
+              <input type="number" id="classesPerWeek" min="1" value="3">
+            </label>
+            <label>Session length (slots)
+              <input type="number" id="sessionLength" min="1" value="1">
+            </label>
+            <label>Faculty
+              <select id="subjectFaculty"></select>
+            </label>
+          </div>
+
+          <details class="fold">
+            <summary>Advanced constraints (optional)</summary>
+            <div class="row">
+              <label>Fixed slot?
+                <input type="checkbox" id="hasFixedSlot">
+              </label>
+              <label>Day
+                <select id="fixedDay" disabled></select>
+              </label>
+              <label>Start time
+                <input type="time" id="fixedStart" disabled>
+              </label>
+              <label>Length (slots)
+                <input type="number" id="fixedLength" min="1" value="1" disabled>
+              </label>
+            </div>
+            <div class="row">
+              <label>Subject unavailability (choose start)
+                <input type="time" id="subUnavailStart">
+              </label>
+              <label>to (end)
+                <input type="time" id="subUnavailEnd">
+              </label>
+              <label>on Day
+                <select id="subUnavailDay"></select>
+              </label>
+              <button id="addSubUnavail" type="button" class="secondary">Add Block</button>
+            </div>
+            <div id="subUnavailList" class="chips"></div>
+          </details>
+
+          <div class="row">
+            <button id="addSubject" class="secondary">Add Subject</button>
+          </div>
+          <div id="subjectsList" class="cards"></div>
+        </div>
+
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+          <button class="primary next">Next</button>
+        </div>
+      </section>
+
+      <!-- STEP 5 -->
+      <section class="step" data-step="5" hidden>
+        <h2>Step 5 — Fixed Events & Breaks</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>Global Breaks</h3>
+            <p>Allow users to choose a time slot and duration for breaks.</p>
+            <div class="row">
+              <label>Break start
+                <input type="time" id="breakStart">
+              </label>
+              <label>Break duration (minutes)
+                <input type="number" id="breakDuration" min="5" step="5" value="60">
+              </label>
+              <label>On Day
+                <select id="breakDay"></select>
+              </label>
+              <button id="addBreak" class="secondary">Add Break</button>
+            </div>
+            <div id="breaksList" class="chips"></div>
+          </div>
+
+          <div class="card">
+            <h3>Global Fixed Events</h3>
+            <p>Special classes or events with fixed slots (e.g., Assembly, Seminar).</p>
+            <div class="row">
+              <label>Event name
+                <input type="text" id="eventName" placeholder="e.g., Dept. Seminar">
+              </label>
+              <label>Day
+                <select id="eventDay"></select>
+              </label>
+              <label>Start time
+                <input type="time" id="eventStart">
+              </label>
+              <label>Length (slots)
+                <input type="number" id="eventLen" min="1" value="1">
+              </label>
+              <label>Room type
+                <select id="eventRoomType">
+                  <option value="theory">Theory</option>
+                  <option value="practical">Lab</option>
+                </select>
+              </label>
+              <button id="addEvent" class="secondary">Add Event</button>
+            </div>
+            <div id="eventsList" class="cards"></div>
+          </div>
+        </div>
+
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+          <button class="primary next">Next</button>
+        </div>
+      </section>
+
+      <!-- STEP 6 -->
+      <section class="step" data-step="6" hidden>
+        <h2>Step 6 — Review & Generate</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>Summary</h3>
+            <pre id="summary" class="summary"></pre>
+          </div>
+          <div class="card">
+            <h3>Generation Options</h3>
+            <label class="row">
+              <span>Max attempts (increase if schedule is tight)</span>
+              <input type="number" id="maxAttempts" min="1" value="4000">
+            </label>
+            <label class="row">
+              <span>Balance subjects across week</span>
+              <input type="checkbox" id="balanceAcrossWeek" checked>
+            </label>
+            <button id="generate" class="primary xl">Generate Timetable</button>
+            <div id="genStatus" class="status"></div>
+          </div>
+        </div>
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+        </div>
+      </section>
+
+      <!-- STEP 7 -->
+      <section class="step" data-step="7" hidden>
+        <h2>Step 7 — Results</h2>
+        <div id="results"></div>
+
+        <div class="export-bar card">
+          <button id="btnPrint" class="secondary">Print / Save as PDF</button>
+          <button id="btnExportAllCSV" class="secondary">Export CSV (All Batches)</button>
+          <button id="btnExportJSON" class="secondary">Export JSON</button>
+        </div>
+        <div class="nav">
+          <button class="ghost prev">Back</button>
+          <button class="primary" id="startOver">Start Over</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© 2025 IBP Timetable Generator • NEP 2020 ready</span>
+    <a href="#" id="sampleData">Load sample data</a>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
