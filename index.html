@@ -293,6 +293,23 @@
       <!-- STEP 7 -->
       <section class="step" data-step="7" hidden>
         <h2>Step 7 — Results</h2>
+         <!-- SEARCH BAR (paste this above the results div) -->
+    <div class="card search-card">
+      <div class="row" style="align-items:center;">
+        <label style="flex:1;">
+          <span>Search subjects or faculty</span>
+          <input id="ttSearchInput" type="search" placeholder="Search e.g. Maths or Dr. Sharma" autocomplete="off" />
+        </label>
+
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="ttSearchClear" class="ghost">Clear</button>
+          <div id="ttSearchCount" style="color:var(--muted); font-size:13px; min-width:80px; text-align:right;">0 matches</div>
+        </div>
+      </div>
+
+      <div id="ttSuggestions" class="suggestions" hidden></div>
+    </div>
+
         <div id="results"></div>
 
         <div class="export-bar card">
@@ -316,3 +333,4 @@
   <script src="app.js"></script>
 </body>
 </html>
+
