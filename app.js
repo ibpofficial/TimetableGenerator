@@ -847,3 +847,1240 @@ function buildTimetableTable(solution, batch){
 
 // ---------- Init ----------
 populateDaySelects();
+// ---------- Simple Drag & Drop Editing for Timetable ----------
+(function(){
+  function enableDragDropEditing(){
+    const results = document.getElementById("results");
+    if(!results) return;
+
+    const slots = results.querySelectorAll(".slot");
+    let draggedEl = null;
+    let draggedData = null;
+
+    slots.forEach(slot => {
+      slot.draggable = true;
+
+      slot.addEventListener("dragstart", e => {
+        draggedEl = slot;
+        draggedData = {
+          batch: slot.dataset.batch,
+          timeslotId: slot.dataset.timeslotId
+        };
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", JSON.stringify(draggedData));
+        slot.classList.add("dragging");
+      });
+
+      slot.addEventListener("dragend", e => {
+        slot.classList.remove("dragging");
+        draggedEl = null;
+        draggedData = null;
+      });
+    });
+
+    const cells = results.querySelectorAll("td");
+    cells.forEach(cell => {
+      cell.addEventListener("dragover", e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        cell.classList.add("drop-target");
+      });
+
+      cell.addEventListener("dragleave", e => {
+        cell.classList.remove("drop-target");
+      });
+
+      cell.addEventListener("drop", e => {
+        e.preventDefault();
+        cell.classList.remove("drop-target");
+        if(!draggedData) return;
+
+        const targetSlot = cell.querySelector(".slot");
+        if(!targetSlot) return;
+
+        // Swap the HTML
+        const sourceHTML = draggedEl.innerHTML;
+        const targetHTML = targetSlot.innerHTML;
+
+        draggedEl.innerHTML = targetHTML;
+        targetSlot.innerHTML = sourceHTML;
+
+        // Swap the dataset info
+        const tmpBatch = draggedEl.dataset.batch;
+        const tmpTS = draggedEl.dataset.timeslotId;
+
+        draggedEl.dataset.batch = targetSlot.dataset.batch;
+        draggedEl.dataset.timeslotId = targetSlot.dataset.timeslotId;
+
+        targetSlot.dataset.batch = tmpBatch;
+        targetSlot.dataset.timeslotId = tmpTS;
+
+        // Update the solution object so exports reflect changes
+        swapAssignments(draggedEl.dataset.batch, draggedEl.dataset.timeslotId,
+                        targetSlot.dataset.batch, targetSlot.dataset.timeslotId);
+      });
+    });
+  }
+
+  function swapAssignments(batchA, tsA, batchB, tsB){
+    if(!state.solution) return;
+    const byBatch = state.solution.byBatch;
+    if(!byBatch) return;
+
+    let assignA = null, assignB = null;
+
+    for(const a of (byBatch[batchA]||[])){
+      if(a.timeslotId === tsA) assignA = a;
+    }
+    for(const b of (byBatch[batchB]||[])){
+      if(b.timeslotId === tsB) assignB = b;
+    }
+
+    if(assignA && assignB){
+      const tmp = assignA.timeslotId;
+      assignA.timeslotId = assignB.timeslotId;
+      assignB.timeslotId = tmp;
+    }
+  }
+
+  // Call after results render
+  const oldRenderResults = renderResults;
+  renderResults = function(){
+    oldRenderResults();
+    setTimeout(()=>enableDragDropEditing(),50);
+  };
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ---------- Conflict Warnings Panel ----------
+(function(){
+  // Create a panel under the generation status
+  const genStatus = document.getElementById("genStatus");
+  const conflictPanel = document.createElement("div");
+  conflictPanel.id = "conflictPanel";
+  conflictPanel.style.marginTop = "12px";
+  conflictPanel.style.fontSize = "13px";
+  conflictPanel.style.lineHeight = "1.5";
+  conflictPanel.style.color = "#fca5a5"; // light red
+  genStatus.insertAdjacentElement("afterend", conflictPanel);
+
+  // Helper to push warnings
+  function addConflict(reason){
+    if(!state._conflicts) state._conflicts = [];
+    state._conflicts.push(reason);
+  }
+
+  // Patch generateSchedule() with conflict tracking
+  const oldGenerate = generateSchedule;
+  generateSchedule = function(){
+    state._conflicts = [];
+    const sol = oldGenerate();
+    if(!sol){
+      // if failed, show collected reasons
+      showConflicts();
+    } else {
+      clearConflicts();
+    }
+    return sol;
+  };
+
+  function showConflicts(){
+    if(!state._conflicts || state._conflicts.length===0){
+      conflictPanel.textContent = "⚠ No specific conflicts detected, but constraints may be too strict.";
+      return;
+    }
+    conflictPanel.innerHTML = "<strong>Conflicts detected:</strong><br>" +
+      state._conflicts.map(c => "• " + c).join("<br>");
+  }
+
+  function clearConflicts(){
+    conflictPanel.textContent = "";
+  }
+
+  // ---- Hook into common failure points ----
+  // You already return null in many places when constraints fail.
+  // We'll override those spots to call addConflict() before returning.
+
+  // Example patches:
+  const oldFindStartTimeslot = window.findStartTimeslot;
+  if(oldFindStartTimeslot){
+    window.findStartTimeslot = function(day, start, slots){
+      const res = oldFindStartTimeslot(day, start, slots);
+      if(!res){
+        addConflict(`No valid starting timeslot found on ${day} at ${start}.`);
+      }
+      return res;
+    };
+  }
+
+  // Patch isRoomFreeLocal, isFacultyFreeLocal, isBatchFreeLocal to add conflicts
+  function patchConflict(fnName, label){
+    if(typeof window[fnName] === "function"){
+      const oldFn = window[fnName];
+      window[fnName] = function(...args){
+        const ok = oldFn.apply(this, args);
+        if(!ok){
+          const tsId = args[1] || args[0];
+          const ts = (state.solution?.timeslots || []).find(t=>t.id===tsId);
+          const dayTime = ts ? `${ts.day} ${ts.start}` : tsId;
+          addConflict(`${label} conflict at ${dayTime}`);
+        }
+        return ok;
+      };
+    }
+  }
+  patchConflict("isRoomFreeLocal", "Room");
+  patchConflict("isFacultyFreeLocal", "Faculty");
+  patchConflict("isBatchFreeLocal", "Batch");
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/* ========== Timetable Search & Highlight Feature ========= */
+(function(){
+  const input = document.getElementById("ttSearchInput");
+  const suggestionsBox = document.getElementById("ttSuggestions");
+  const clearBtn = document.getElementById("ttSearchClear");
+  const countEl = document.getElementById("ttSearchCount");
+  const resultsWrap = document.getElementById("results");
+
+  if(!input || !suggestionsBox || !clearBtn) return;
+
+  // Build searchable lists from current subjects & faculties
+  function getSearchCorpus(){
+    const subjects = Array.from(new Set(state.subjects.map(s => s.name).filter(Boolean)));
+    const faculties = Array.from(new Set(state.faculties.map(f => f.name).filter(Boolean)));
+    return { subjects, faculties, combined: subjects.concat(faculties) };
+  }
+
+  // simple case-insensitive substring match
+  function basicMatches(q, list){
+    q = q.trim().toLowerCase();
+    if(!q) return [];
+    return list.filter(x => x.toLowerCase().includes(q));
+  }
+
+  // Levenshtein distance for fuzzy suggestions
+  function levenshtein(a,b){
+    if(a===b) return 0;
+    const al=a.length, bl=b.length;
+    if(al===0) return bl;
+    if(bl===0) return al;
+    const row = Array(bl+1).fill(0).map((_,i)=>i);
+    for(let i=1;i<=al;i++){
+      let prev = row[0];
+      row[0] = i;
+      for(let j=1;j<=bl;j++){
+        const cur = row[j];
+        const add = prev + (a[i-1]===b[j-1]?0:1);
+        const del = row[j] + 1;
+        const ins = row[j-1] + 1;
+        prev = cur;
+        row[j] = Math.min(add, del, ins);
+      }
+    }
+    return row[bl];
+  }
+
+  // fuzzy suggestions: return items with small levenshtein distance or best matches
+  function fuzzySuggest(q, list, max=6){
+    const ql = q.trim().toLowerCase();
+    const scored = list.map(x => {
+      const name = x.toLowerCase();
+      const dist = levenshtein(ql, name);
+      const includes = name.includes(ql) ? 0 : 1;
+      return {item: x, dist, includes};
+    }).sort((a,b) => (a.includes - b.includes) || (a.dist - b.dist));
+    return scored.filter(s => s.dist <= Math.max(2, Math.floor(ql.length*0.4))).slice(0,max).map(s=>s.item);
+  }
+
+  // Render suggestion chips
+  function showSuggestions(q){
+    const { combined } = getSearchCorpus();
+    if(!q || q.trim().length===0){ suggestionsBox.hidden = true; return; }
+    let hits = basicMatches(q, combined);
+    if(hits.length===0) hits = fuzzySuggest(q, combined);
+    suggestionsBox.innerHTML = "";
+    if(hits.length===0){ suggestionsBox.hidden = true; return; }
+    hits.forEach(h => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = h;
+      btn.addEventListener("click", ()=> {
+        input.value = h;
+        doSearchAndHighlight(h);
+        suggestionsBox.hidden = true;
+      });
+      suggestionsBox.appendChild(btn);
+    });
+    suggestionsBox.hidden = false;
+  }
+
+  // Remove existing highlights
+  function clearHighlights(){
+    document.querySelectorAll(".slot.search-highlight").forEach(el => el.classList.remove("search-highlight"));
+    document.querySelectorAll(".slot.faculty-highlight").forEach(el => el.classList.remove("faculty-highlight"));
+    countEl.textContent = "0 matches";
+  }
+
+  // Main: highlight timetable slots that match query (subject or faculty)
+  function doSearchAndHighlight(q){
+    clearHighlights();
+    if(!q || !q.trim()) return;
+    const qq = q.trim().toLowerCase();
+    let matches = 0;
+    // find all slots in the rendered timetable
+    const slots = resultsWrap.querySelectorAll(".slot");
+    slots.forEach(slot => {
+      const nameEl = slot.querySelector(".s-name");
+      const metaEl = slot.querySelector(".s-meta");
+      const name = nameEl ? nameEl.textContent.trim().toLowerCase() : "";
+      const meta = metaEl ? metaEl.textContent.trim().toLowerCase() : "";
+
+      // match subject name (substring)
+      if(name && name.includes(qq)){
+        slot.classList.add("search-highlight");
+        matches++;
+        return;
+      }
+      // match faculty name inside meta (substring)
+      if(meta && meta.includes(qq)){
+        slot.classList.add("faculty-highlight");
+        matches++;
+        return;
+      }
+      // fallback: fuzzy on subject or faculty names (small distance)
+      const corpus = getSearchCorpus();
+      // check subject fuzzy
+      for(const s of corpus.subjects){
+        if(levenshtein(qq, s.toLowerCase()) <= Math.max(1, Math.floor(qq.length*0.35)) && name.includes(s.toLowerCase().slice(0,1))){
+          slot.classList.add("search-highlight");
+          matches++; break;
+        }
+      }
+    });
+    countEl.textContent = `${matches} match${matches===1? "":"es"}`;
+  }
+
+  // on input: show suggestions and highlight as user types (but don't be too aggressive)
+  let inputTimer = null;
+  input.addEventListener("input", (e) => {
+    const v = e.target.value;
+    showSuggestions(v);
+    clearTimeout(inputTimer);
+    inputTimer = setTimeout(()=> doSearchAndHighlight(v), 250);
+  });
+
+  clearBtn.addEventListener("click", () => {
+    input.value = "";
+    clearHighlights();
+    suggestionsBox.hidden = true;
+    input.focus();
+  });
+
+  // When the timetable is re-rendered, re-apply last query highlights.
+  // We use a MutationObserver on the #results area to detect re-render.
+  let lastQuery = "";
+  input.addEventListener("blur", ()=> lastQuery = input.value);
+  input.addEventListener("change", ()=> lastQuery = input.value);
+
+  const obs = new MutationObserver(() => {
+    // small timeout to let DOM settle
+    setTimeout(() => {
+      const q = input.value || lastQuery;
+      if(q && q.trim()) doSearchAndHighlight(q);
+    }, 40);
+  });
+  obs.observe(resultsWrap, { childList: true, subtree: true });
+
+  // Helpful: clicking outside suggestions hides them
+  document.addEventListener("click", (ev) => {
+    if(!suggestionsBox.contains(ev.target) && ev.target !== input){
+      suggestionsBox.hidden = true;
+    }
+  });
+
+  // If user switches to Results step programmatically, attempt to re-apply highlight
+  // (in case the results were rendered previously)
+  const originalShowStep = showStep;
+  window.showStep = function(n){
+    originalShowStep(n);
+    if(n === 7){
+      setTimeout(()=> {
+        const q = input.value || lastQuery;
+        if(q && q.trim()) doSearchAndHighlight(q);
+      }, 50);
+    }
+  };
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ========== Faculty Workload Visualization ==========
+(function() {
+    // Add CSS for workload visualization
+    const style = document.createElement('style');
+    style.textContent = `
+        .workload-container {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border-left: 3px solid var(--brand);
+        }
+        
+        .workload-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: var(--text);
+        }
+        
+        .workload-title {
+            font-weight: 600;
+            color: var(--brand);
+        }
+        
+        .workload-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 10px;
+        }
+        
+        .workload-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .workload-stat-value {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text);
+        }
+        
+        .workload-stat-label {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+        
+        .workload-bar-container {
+            width: 100%;
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 8px 0;
+        }
+        
+        .workload-bar {
+            height: 100%;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        
+        .workload-bar-low { background: linear-gradient(90deg, #10b981, #34d399); }
+        .workload-bar-medium { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+        .workload-bar-high { background: linear-gradient(90deg, #ef4444, #f87171); }
+        .workload-bar-over { background: linear-gradient(90deg, #dc2626, #ef4444); }
+        
+        .workload-bar::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: workloadShine 2s infinite;
+        }
+        
+        @keyframes workloadShine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+        
+        .workload-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 4px;
+        }
+        
+        .workload-thresholds {
+            display: flex;
+            justify-content: space-between;
+            position: relative;
+            margin-top: -2px;
+        }
+        
+        .workload-threshold {
+            width: 1px;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.3);
+            position: relative;
+        }
+        
+        .workload-threshold::before {
+            content: attr(data-value);
+            position: absolute;
+            top: -18px;
+            left: -8px;
+            font-size: 10px;
+            color: var(--muted);
+        }
+        
+        .workload-warning {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #fca5a5;
+            animation: pulseWarning 2s infinite;
+        }
+        
+        @keyframes pulseWarning {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        
+        .workload-optimal {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 6px 10px;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #86efac;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Calculate faculty workload
+    function calculateFacultyWorkload(facultyId) {
+        if (!state.solution || !state.solution.byBatch) {
+            return { hours: 0, sessions: 0, averagePerDay: 0 };
+        }
+
+        let totalHours = 0;
+        let totalSessions = 0;
+        const daysWorked = new Set();
+        const dailyHours = {};
+
+        // Initialize daily hours
+        state.days.forEach(day => dailyHours[day] = 0);
+
+        // Calculate from assignments
+        Object.values(state.solution.byBatch).forEach(assignments => {
+            assignments.forEach(assignment => {
+                if (assignment.facultyId === facultyId) {
+                    const timeslot = state.solution.timeslots.find(ts => ts.id === assignment.timeslotId);
+                    if (timeslot && !timeslot.isBreak) {
+                        const slotHours = state.slotLength / 60; // Convert minutes to hours
+                        totalHours += slotHours;
+                        totalSessions++;
+                        daysWorked.add(timeslot.day);
+                        dailyHours[timeslot.day] += slotHours;
+                    }
+                }
+            });
+        });
+
+        const averagePerDay = totalHours / Math.max(daysWorked.size, 1);
+        
+        return {
+            hours: Math.round(totalHours * 10) / 10,
+            sessions: totalSessions,
+            daysWorked: daysWorked.size,
+            averagePerDay: Math.round(averagePerDay * 10) / 10,
+            dailyHours: dailyHours
+        };
+    }
+
+    // Get workload level
+    function getWorkloadLevel(hours) {
+        if (hours === 0) return 'none';
+        if (hours <= 15) return 'low';
+        if (hours <= 25) return 'medium';
+        if (hours <= 35) return 'high';
+        return 'over';
+    }
+
+    // Create workload visualization
+    function createWorkloadVisualization(faculty) {
+        const workload = calculateFacultyWorkload(faculty.id);
+        const level = getWorkloadLevel(workload.hours);
+        const percentage = Math.min((workload.hours / 40) * 100, 100); // Cap at 40 hours for visualization
+        
+        const container = document.createElement('div');
+        container.className = 'workload-container';
+        
+        const workloadHTML = `
+            <div class="workload-header">
+                <span class="workload-title">Workload Analysis</span>
+                <span style="color: ${level === 'over' ? '#ef4444' : level === 'high' ? '#f59e0b' : level === 'medium' ? '#10b981' : '#94a3b8'}">
+                    ${level.toUpperCase()} • ${workload.hours}h/week
+                </span>
+            </div>
+            
+            <div class="workload-stats">
+                <div class="workload-stat">
+                    <span class="workload-stat-value">${workload.sessions}</span>
+                    <span class="workload-stat-label">Sessions</span>
+                </div>
+                <div class="workload-stat">
+                    <span class="workload-stat-value">${workload.daysWorked}</span>
+                    <span class="workload-stat-label">Days</span>
+                </div>
+                <div class="workload-stat">
+                    <span class="workload-stat-value">${workload.averagePerDay}h</span>
+                    <span class="workload-stat-label">Avg/Day</span>
+                </div>
+            </div>
+            
+            <div class="workload-bar-container">
+                <div class="workload-bar workload-bar-${level}" style="width: ${percentage}%"></div>
+            </div>
+            
+            <div class="workload-thresholds">
+                <div class="workload-threshold" style="left: 37.5%" data-value="15h"></div>
+                <div class="workload-threshold" style="left: 62.5%" data-value="25h"></div>
+                <div class="workload-threshold" style="left: 87.5%" data-value="35h"></div>
+            </div>
+            
+            <div class="workload-labels">
+                <span>Light</span>
+                <span>Optimal</span>
+                <span>Heavy</span>
+                <span>Overload</span>
+            </div>
+            
+            ${level === 'over' ? `
+                <div class="workload-warning">
+                    ⚠️ Faculty is overloaded! Consider redistributing sessions.
+                </div>
+            ` : level === 'high' ? `
+                <div class="workload-warning">
+                    ⚠️ Heavy workload detected. Monitor for burnout risk.
+                </div>
+            ` : level === 'medium' ? `
+                <div class="workload-optimal">
+                    ✓ Optimal workload distribution
+                </div>
+            ` : level === 'low' ? `
+                <div class="workload-optimal">
+                    💡 Light workload - capacity available
+                </div>
+            ` : `
+                <div class="workload-optimal">
+                    📊 No scheduled sessions
+                </div>
+            `}
+            
+            ${workload.hours > 0 ? `
+                <div style="margin-top: 10px; font-size: 11px; color: var(--muted);">
+                    <strong>Daily Distribution:</strong> 
+                    ${state.days.map(day => `${day}: ${workload.dailyHours[day]}h`).join(' • ')}
+                </div>
+            ` : ''}
+        `;
+        
+        container.innerHTML = workloadHTML;
+        return container;
+    }
+
+    // Add workload visualization to faculty cards
+    function addWorkloadToFacultyCards() {
+        const facultyCards = document.querySelectorAll('#facultiesList .minicard');
+        facultyCards.forEach(card => {
+            // Remove existing workload container if present
+            const existingWorkload = card.querySelector('.workload-container');
+            if (existingWorkload) {
+                existingWorkload.remove();
+            }
+            
+            // Only add workload if we have a solution
+            if (!state.solution) return;
+            
+            // Extract faculty ID from the card (we'll need to store it in data attribute)
+            const facultyName = card.querySelector('.title').textContent.trim();
+            const faculty = state.faculties.find(f => f.name === facultyName);
+            
+            if (faculty) {
+                const workloadViz = createWorkloadVisualization(faculty);
+                card.appendChild(workloadViz);
+            }
+        });
+    }
+
+    // Modify the renderFaculties function to include faculty ID
+    const originalRenderFaculties = renderFaculties;
+    renderFaculties = function() {
+        originalRenderFaculties();
+        
+        // Add data attribute to faculty cards for easier identification
+        const facultyCards = document.querySelectorAll('#facultiesList .minicard');
+        facultyCards.forEach((card, index) => {
+            if (index < state.faculties.length) {
+                card.setAttribute('data-faculty-id', state.faculties[index].id);
+            }
+        });
+        
+        // Add workload visualization
+        addWorkloadToFacultyCards();
+    };
+
+    // Update workload when timetable is generated
+    const originalRenderResults = renderResults;
+    renderResults = function() {
+        originalRenderResults();
+        addWorkloadToFacultyCards();
+    };
+
+    // Also update when loading sample data or configuration
+    const originalLoadSample = loadSample;
+    loadSample = function() {
+        originalLoadSample();
+        setTimeout(addWorkloadToFacultyCards, 100);
+    };
+
+    // Add workload summary to Step 7 results
+    function addWorkloadSummary() {
+        if (!state.solution) return;
+        
+        const resultsContainer = document.getElementById('results');
+        if (!resultsContainer) return;
+        
+        // Check if workload summary already exists
+        if (document.getElementById('workload-summary')) {
+            return;
+        }
+        
+        const summaryContainer = document.createElement('div');
+        summaryContainer.id = 'workload-summary';
+        summaryContainer.className = 'card';
+        summaryContainer.style.marginBottom = '20px';
+        
+        let summaryHTML = `
+            <h3>Faculty Workload Summary</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-top: 15px;">
+        `;
+        
+        state.faculties.forEach(faculty => {
+            const workload = calculateFacultyWorkload(faculty.id);
+            const level = getWorkloadLevel(workload.hours);
+            
+            summaryHTML += `
+                <div class="minicard" style="border-left: 4px solid ${
+                    level === 'over' ? '#ef4444' : 
+                    level === 'high' ? '#f59e0b' : 
+                    level === 'medium' ? '#10b981' : '#94a3b8'
+                };">
+                    <div class="title">${faculty.name}</div>
+                    <div class="meta">${workload.hours}h/week • ${workload.sessions} sessions</div>
+                    <div class="meta">${workload.daysWorked} days • ${workload.averagePerDay}h/day avg</div>
+                    <div style="margin-top: 8px; font-size: 12px; color: ${
+                        level === 'over' ? '#ef4444' : 
+                        level === 'high' ? '#f59e0b' : 
+                        level === 'medium' ? '#10b981' : '#94a3b8'
+                    };">
+                        ${level.toUpperCase()} WORKLOAD
+                    </div>
+                </div>
+            `;
+        });
+        
+        summaryHTML += `</div>`;
+        summaryContainer.innerHTML = summaryHTML;
+        
+        // Insert at the beginning of results
+        resultsContainer.insertBefore(summaryContainer, resultsContainer.firstChild);
+    }
+
+    // Hook into results rendering to add workload summary
+    const oldShowStep = showStep;
+    showStep = function(n) {
+        oldShowStep(n);
+        if (n === 7) {
+            setTimeout(addWorkloadSummary, 50);
+        }
+    };
+
+    console.log('Faculty Workload Visualization loaded successfully!');
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ---------- Faculty constraints + workload summary patch ----------
+// Paste this entire block at the END of your app.js
+
+// Keep a reference to the original generateSchedule function
+const __origGenerateSchedule = typeof generateSchedule === "function" ? generateSchedule : null;
+
+// Utility to find faculty object by id
+function getFacultyById(id){
+  return state.faculties.find(f => f.id === id);
+}
+
+// Enhance faculty objects on load / add defaults
+function ensureFacultyFields(){
+  state.faculties = state.faculties.map(f => {
+    if(typeof f.unavail === "undefined") f.unavail = []; // [{day,start,end}]
+    if(typeof f.maxWeeklySlots === "undefined") f.maxWeeklySlots = 18; // default
+    return f;
+  });
+}
+
+// Replace renderFaculties with enhanced version (safe: will override earlier function)
+function renderFaculties(){
+  ensureFacultyFields();
+  const container = byId("facultiesList");
+  container.innerHTML = "";
+  state.faculties.forEach(f => {
+    // build the faculty card with additional controls for unavailability & max workload
+    const card = document.createElement("div");
+    card.className = "minicard";
+    card.innerHTML = `
+      <div class="title">${f.name}</div>
+      <div class="meta">Avg leaves/mo: ${f.leaves||0} • Max/week: <span class="maxWeeklyVal">${f.maxWeeklySlots}</span></div>
+      <div style="margin-top:10px" class="faculty-controls">
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <label style="min-width:130px;">
+            Max weekly slots
+            <input type="number" class="faculty-max-weekly" value="${f.maxWeeklySlots}" min="1" style="padding:8px; border-radius:8px; width:120px;">
+          </label>
+          <label style="min-width:120px;">
+            Unavail start
+            <input type="time" class="faculty-un-day-start" />
+          </label>
+          <label style="min-width:120px;">
+            Unavail end
+            <input type="time" class="faculty-un-day-end" />
+          </label>
+          <label style="min-width:100px;">
+            Day
+            <select class="faculty-un-day"></select>
+          </label>
+          <button class="secondary add-fac-unavail">Add Unavail</button>
+        </div>
+
+        <div class="chips faculty-unavail-list" style="margin-top:10px;"></div>
+
+        <div class="row" style="margin-top:8px">
+          <button class="ghost remove-fac" data-act="del">Remove</button>
+        </div>
+      </div>
+    `;
+
+    // populate day select
+    const daySel = card.querySelector(".faculty-un-day");
+    state.days.forEach(d => {
+      const opt = document.createElement("option"); opt.value = d; opt.textContent = d;
+      daySel.appendChild(opt);
+    });
+
+    // populate existing unavailability chips
+    const unList = card.querySelector(".faculty-unavail-list");
+    function renderUnavailChips(){
+      unList.innerHTML = "";
+      (f.unavail || []).forEach((u, idx) => {
+        const chip = document.createElement("div"); chip.className = "chip";
+        chip.innerHTML = `<span>${u.day} ${u.start}–${u.end}</span> <button title="Remove">✕</button>`;
+        chip.querySelector("button").addEventListener("click", () => {
+          f.unavail.splice(idx, 1);
+          renderUnavailChips();
+          renderFaculties(); // re-render to reflect changes
+        });
+        unList.appendChild(chip);
+      });
+    }
+    renderUnavailChips();
+
+    // add unavailability handler
+    card.querySelector(".add-fac-unavail").addEventListener("click", () => {
+      const start = card.querySelector(".faculty-un-day-start").value;
+      const end = card.querySelector(".faculty-un-day-end").value;
+      const day = card.querySelector(".faculty-un-day").value;
+      if(!start || !end || !day){ alert("Select day, start and end for unavailability."); return; }
+      // basic validation
+      if(t2m(end) <= t2m(start)){ alert("End must be after start."); return; }
+      f.unavail.push({ day, start, end });
+      card.querySelector(".faculty-un-day-start").value = "";
+      card.querySelector(".faculty-un-day-end").value = "";
+      renderUnavailChips();
+    });
+
+    // max weekly handler
+    const maxInput = card.querySelector(".faculty-max-weekly");
+    const maxWeeklyVal = card.querySelector(".maxWeeklyVal");
+    maxInput.addEventListener("change", () => {
+      const v = Number(maxInput.value) || 18;
+      f.maxWeeklySlots = v;
+      maxWeeklyVal.textContent = v;
+    });
+
+    // remove faculty
+    card.querySelector("[data-act=del]").addEventListener("click", () => {
+      if(!confirm("Remove faculty & unassign their subjects?")) return;
+      state.faculties = state.faculties.filter(x => x.id !== f.id);
+      // clear from subjects
+      state.subjects.forEach(s => { if(s.facultyId === f.id) s.facultyId = null; });
+      renderFaculties();
+      renderSubjects();
+      syncBatchAndFacultySelects();
+    });
+
+    container.appendChild(card);
+  });
+}
+
+// Call new renderFaculties initially (if it replaces old one)
+try{ renderFaculties(); } catch(e){ /* if original not yet defined, ignore */ }
+
+// Replace the Generate click handler so we can validate faculty constraints
+(function replaceGenerateHandler(){
+  const genBtn = byId("generate");
+  if(!genBtn) return;
+  const newBtn = genBtn.cloneNode(true);
+  genBtn.parentNode.replaceChild(newBtn, genBtn);
+
+  newBtn.addEventListener("click", () => {
+    // UI feedback
+    byId("genStatus").textContent = "Generating (with faculty constraint checks)…";
+    setTimeout(() => {
+      try{
+        // ensure faculty fields exist
+        ensureFacultyFields();
+
+        if(typeof __origGenerateSchedule !== "function"){
+          byId("genStatus").textContent = "Error: original generateSchedule unavailable.";
+          return;
+        }
+
+        // Call original scheduler
+        const sol = __origGenerateSchedule();
+        if(!sol){
+          byId("genStatus").textContent = "No feasible schedule found by generator.";
+          return;
+        }
+
+        // Validate solution against faculty unavailability & maxWeeklySlots
+        const violations = [];
+        const facultyCounts = Object.fromEntries(state.faculties.map(f => [f.id, 0]));
+        const tsById = Object.fromEntries(sol.timeslots.map(t => [t.id, t]));
+
+        for(const [batch, cells] of Object.entries(sol.byBatch || {})){
+          for(const cell of cells){
+            const ts = tsById[cell.timeslotId];
+            if(!ts) continue;
+            if(!cell.facultyId) continue;
+            const fac = getFacultyById(cell.facultyId);
+            if(!fac) continue;
+            facultyCounts[fac.id] = (facultyCounts[fac.id] || 0) + 1;
+
+            // check unavailability overlap
+            if(fac.unavail && fac.unavail.length){
+              for(const u of fac.unavail){
+                if(u.day !== ts.day) continue;
+                const a = t2m(u.start), b = t2m(u.end);
+                if(!(ts.endMin <= a || ts.startMin >= b)){
+                  violations.push({
+                    type: "unavail",
+                    faculty: fac.name,
+                    facultyId: fac.id,
+                    day: ts.day,
+                    time: `${ts.start}–${ts.end}`,
+                    subject: cell.subject,
+                    batch
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // check max weekly
+        for(const f of state.faculties){
+          const cnt = facultyCounts[f.id] || 0;
+          if(typeof f.maxWeeklySlots === "number" && cnt > f.maxWeeklySlots){
+            violations.push({
+              type: "maxWeekly",
+              faculty: f.name,
+              facultyId: f.id,
+              count: cnt,
+              max: f.maxWeeklySlots
+            });
+          }
+        }
+
+        if(violations.length){
+          // Show detailed messages and still set state.solution so user can inspect (but mark problem)
+          state.solution = sol;
+          byId("genStatus").textContent = `Generated, but ${violations.length} faculty constraint issue(s) detected — see details below.`;
+          showStep(7);
+          renderFacultyViolations(violations);
+          renderWorkloadSummary(sol); // still show counts
+        }else{
+          // All good
+          state.solution = sol;
+          byId("genStatus").textContent = "Success!";
+          showStep(7);
+          clearFacultyViolations();
+          renderWorkloadSummary(sol);
+        }
+      }catch(err){
+        console.error(err);
+        byId("genStatus").textContent = "Error during generation: " + (err.message || err);
+      }
+    }, 30);
+  });
+})();
+
+// Renders violations panel in Results step (below the results div)
+function renderFacultyViolations(violations){
+  clearFacultyViolations();
+  const resultsWrap = byId("results");
+  const panel = document.createElement("div");
+  panel.id = "facultyConstraintViolations";
+  panel.className = "card";
+  const header = document.createElement("h3"); header.textContent = "Faculty constraint issues";
+  panel.appendChild(header);
+
+  const ul = document.createElement("div");
+  ul.style.marginTop = "8px";
+  ul.style.color = "var(--warn)";
+  violations.forEach(v => {
+    if(v.type === "unavail"){
+      const d = document.createElement("div");
+      d.textContent = `${v.faculty} assigned ${v.subject} for ${v.batch} on ${v.day} ${v.time} — faculty marked unavailable then.`;
+      ul.appendChild(d);
+    } else if(v.type === "maxWeekly"){
+      const d = document.createElement("div");
+      d.textContent = `${v.faculty} has ${v.count} assigned slots (max ${v.max}).`;
+      ul.appendChild(d);
+    }
+  });
+  panel.appendChild(ul);
+
+  const advice = document.createElement("div");
+  advice.style.marginTop = "12px";
+  advice.style.color = "var(--muted)";
+  advice.textContent = "Advice: adjust faculty unavailability or increase max weekly slots, or relax subject fixed slots/other constraints and regenerate.";
+  panel.appendChild(advice);
+
+  resultsWrap.insertBefore(panel, resultsWrap.firstChild);
+}
+
+function clearFacultyViolations(){
+  const ex = byId("facultyConstraintViolations");
+  if(ex && ex.parentNode) ex.parentNode.removeChild(ex);
+}
+
+// Workload summary UI — inserts/updates a card below the timetable
+function renderWorkloadSummary(solution){
+  // remove old summary if present
+  const existing = byId("workloadSummaryCard");
+  if(existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  if(!solution) return;
+  const resultsWrap = byId("results");
+
+  // compute counts
+  const facultyCounts = Object.fromEntries(state.faculties.map(f => [f.id, { name: f.name, count: 0, max: f.maxWeeklySlots || 18 }]));
+  const tsById = Object.fromEntries(solution.timeslots.map(t => [t.id, t]));
+  for(const [batch, cells] of Object.entries(solution.byBatch || {})){
+    for(const cell of cells){
+      const fid = cell.facultyId;
+      if(!fid) continue;
+      if(facultyCounts[fid]) facultyCounts[fid].count++;
+    }
+  }
+
+  // build card
+  const card = document.createElement("div");
+  card.id = "workloadSummaryCard";
+  card.className = "card";
+  card.innerHTML = `<h3>Faculty Workload Summary</h3>`;
+  const table = document.createElement("div");
+  table.style.marginTop = "12px";
+  table.style.display = "grid";
+  table.style.gridTemplateColumns = "1fr 120px 140px";
+  table.style.gap = "8px";
+  table.style.alignItems = "center";
+  table.style.fontSize = "14px";
+  table.style.color = "var(--muted)";
+  // header row
+  const hdr = document.createElement("div");
+  hdr.style.gridColumn = "1/-1";
+  hdr.style.fontSize = "13px";
+  hdr.style.color = "var(--muted)";
+  hdr.style.marginBottom = "8px";
+  hdr.textContent = "Assigned slots per week (per faculty). Highlighted in red if over their max.";
+  card.appendChild(hdr);
+
+  // rows
+  Object.values(facultyCounts).sort((a,b)=>b.count-a.count).forEach(f => {
+    const name = document.createElement("div"); name.textContent = f.name; name.style.fontWeight = '600'; name.style.color = '#fff';
+    const cnt = document.createElement("div"); cnt.textContent = `${f.count}`; cnt.style.textAlign = "center";
+    const meta = document.createElement("div"); meta.textContent = `Max ${f.max}`; meta.style.textAlign = "center";
+    if(f.count > f.max){
+      cnt.style.color = "var(--danger)";
+      meta.style.color = "var(--danger)";
+    } else {
+      cnt.style.color = "var(--ok)";
+      meta.style.color = "var(--muted)";
+    }
+    table.appendChild(name); table.appendChild(cnt); table.appendChild(meta);
+  });
+
+  card.appendChild(table);
+  resultsWrap.appendChild(card);
+}
+
+// If there's already a solution when this patch loads, show workload summary
+if(state.solution) {
+  try{ renderWorkloadSummary(state.solution); } catch(e){/*ignore*/ }
+}
+
+// Ensure that when user loads a saved config or sample we keep faculty fields and UI in sync
+const originalLoadConfig = byId("btnLoadConfig").onclick;
+try{
+  // Override call to re-render faculties after load
+  const btnLoad = byId("btnLoadConfig");
+  btnLoad.addEventListener("click", () => {
+    setTimeout(() => {
+      ensureFacultyFields(); renderFaculties();
+    }, 200);
+  });
+} catch(e){ /* ignore */ }
+
+// Also guard sample loader
+try{
+  const sampleBtn = byId("sampleData");
+  if(sampleBtn){
+    sampleBtn.addEventListener("click", () => setTimeout(()=>{ ensureFacultyFields(); renderFaculties(); }, 100));
+  }
+} catch(e){}
+
+// End of patch
