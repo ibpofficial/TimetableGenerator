@@ -1085,7 +1085,6 @@ populateDaySelects();
 
 
 
-
 /* ========== Timetable Search & Highlight Feature ========= */
 (function(){
   const input = document.getElementById("ttSearchInput");
@@ -1103,11 +1102,63 @@ populateDaySelects();
     return { subjects, faculties, combined: subjects.concat(faculties) };
   }
 
-  // simple case-insensitive substring match
-  function basicMatches(q, list){
+  // Advanced matching with multiple strategies
+  function findMatches(q, list){
     q = q.trim().toLowerCase();
     if(!q) return [];
-    return list.filter(x => x.toLowerCase().includes(q));
+    
+    const exactMatches = [];
+    const wordBoundaryMatches = [];
+    const substringMatches = [];
+    const fuzzyMatches = [];
+    
+    list.forEach(item => {
+      const itemLower = item.toLowerCase();
+      
+      // 1. Exact match (highest priority)
+      if(itemLower === q) {
+        exactMatches.push(item);
+        return;
+      }
+      
+      // 2. Word boundary matches
+      const words = itemLower.split(/\s+/);
+      const hasWordBoundaryMatch = words.some(word => 
+        word === q || 
+        word.startsWith(q) || 
+        word.endsWith(q)
+      );
+      
+      if(hasWordBoundaryMatch) {
+        wordBoundaryMatches.push(item);
+        return;
+      }
+      
+      // 3. Substring matches
+      if(itemLower.includes(q)) {
+        substringMatches.push(item);
+        return;
+      }
+      
+      // 4. Fuzzy matches (only if query is long enough)
+      if(q.length >= 3) {
+        const distance = levenshtein(q, itemLower);
+        const threshold = Math.max(2, Math.floor(q.length * 0.3));
+        if(distance <= threshold) {
+          fuzzyMatches.push({item, distance});
+        }
+      }
+    });
+    
+    // Sort fuzzy matches by distance
+    fuzzyMatches.sort((a, b) => a.distance - b.distance);
+    
+    return [
+      ...exactMatches,
+      ...wordBoundaryMatches,
+      ...substringMatches,
+      ...fuzzyMatches.map(fm => fm.item)
+    ];
   }
 
   // Levenshtein distance for fuzzy suggestions
@@ -1122,36 +1173,44 @@ populateDaySelects();
       row[0] = i;
       for(let j=1;j<=bl;j++){
         const cur = row[j];
-        const add = prev + (a[i-1]===b[j-1]?0:1);
-        const del = row[j] + 1;
-        const ins = row[j-1] + 1;
+        const cost = a[i-1]===b[j-1] ? 0 : 1;
+        row[j] = Math.min(
+          row[j-1] + 1,    // insertion
+          row[j] + 1,      // deletion
+          prev + cost       // substitution
+        );
         prev = cur;
-        row[j] = Math.min(add, del, ins);
       }
     }
     return row[bl];
   }
 
-  // fuzzy suggestions: return items with small levenshtein distance or best matches
+  // fuzzy suggestions: return items with small levenshtein distance
   function fuzzySuggest(q, list, max=6){
     const ql = q.trim().toLowerCase();
     const scored = list.map(x => {
       const name = x.toLowerCase();
       const dist = levenshtein(ql, name);
-      const includes = name.includes(ql) ? 0 : 1;
-      return {item: x, dist, includes};
-    }).sort((a,b) => (a.includes - b.includes) || (a.dist - b.dist));
-    return scored.filter(s => s.dist <= Math.max(2, Math.floor(ql.length*0.4))).slice(0,max).map(s=>s.item);
+      return {item: x, dist};
+    }).filter(s => s.dist <= Math.max(2, Math.floor(ql.length*0.4)))
+      .sort((a,b) => a.dist - b.dist)
+      .slice(0,max)
+      .map(s => s.item);
+    
+    return scored;
   }
 
   // Render suggestion chips
   function showSuggestions(q){
     const { combined } = getSearchCorpus();
     if(!q || q.trim().length===0){ suggestionsBox.hidden = true; return; }
-    let hits = basicMatches(q, combined);
+    
+    let hits = findMatches(q, combined);
     if(hits.length===0) hits = fuzzySuggest(q, combined);
+    
     suggestionsBox.innerHTML = "";
     if(hits.length===0){ suggestionsBox.hidden = true; return; }
+    
     hits.forEach(h => {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1168,57 +1227,109 @@ populateDaySelects();
 
   // Remove existing highlights
   function clearHighlights(){
-    document.querySelectorAll(".slot.search-highlight").forEach(el => el.classList.remove("search-highlight"));
-    document.querySelectorAll(".slot.faculty-highlight").forEach(el => el.classList.remove("faculty-highlight"));
+    document.querySelectorAll(".slot.search-highlight").forEach(el => {
+      el.classList.remove("search-highlight");
+      el.style.backgroundColor = ''; // Remove any inline styles
+    });
+    document.querySelectorAll(".slot.faculty-highlight").forEach(el => {
+      el.classList.remove("faculty-highlight");
+      el.style.backgroundColor = ''; // Remove any inline styles
+    });
     countEl.textContent = "0 matches";
+  }
+
+  // Check if text contains the query with better matching
+  function textContainsQuery(text, query) {
+    if (!text || !query) return false;
+    
+    const textLower = text.toLowerCase();
+    const queryLower = query.toLowerCase();
+    
+    // Exact match
+    if (textLower === queryLower) return true;
+    
+    // Word boundary match
+    const words = textLower.split(/\s+/);
+    if (words.some(word => word === queryLower)) return true;
+    
+    // Starts with match
+    if (words.some(word => word.startsWith(queryLower))) return true;
+    
+    // Contains match (fallback)
+    return textLower.includes(queryLower);
   }
 
   // Main: highlight timetable slots that match query (subject or faculty)
   function doSearchAndHighlight(q){
     clearHighlights();
     if(!q || !q.trim()) return;
-    const qq = q.trim().toLowerCase();
+    
+    const qq = q.trim();
     let matches = 0;
+    
     // find all slots in the rendered timetable
     const slots = resultsWrap.querySelectorAll(".slot");
+    
     slots.forEach(slot => {
       const nameEl = slot.querySelector(".s-name");
       const metaEl = slot.querySelector(".s-meta");
-      const name = nameEl ? nameEl.textContent.trim().toLowerCase() : "";
-      const meta = metaEl ? metaEl.textContent.trim().toLowerCase() : "";
+      const name = nameEl ? nameEl.textContent.trim() : "";
+      const meta = metaEl ? metaEl.textContent.trim() : "";
 
-      // match subject name (substring)
-      if(name && name.includes(qq)){
+      let isMatch = false;
+      let matchType = '';
+
+      // Check subject name with improved matching
+      if(name && textContainsQuery(name, qq)){
+        isMatch = true;
+        matchType = 'subject';
+      }
+      // Check faculty name with improved matching
+      else if(meta && textContainsQuery(meta, qq)){
+        isMatch = true;
+        matchType = 'faculty';
+      }
+
+      if(isMatch){
+        // Apply red highlight with specific CSS class
         slot.classList.add("search-highlight");
+        slot.style.backgroundColor = "#ff4444"; // Red background
+        slot.style.color = "#ffffff"; // White text for contrast
+        slot.style.fontWeight = "bold";
         matches++;
-        return;
-      }
-      // match faculty name inside meta (substring)
-      if(meta && meta.includes(qq)){
-        slot.classList.add("faculty-highlight");
-        matches++;
-        return;
-      }
-      // fallback: fuzzy on subject or faculty names (small distance)
-      const corpus = getSearchCorpus();
-      // check subject fuzzy
-      for(const s of corpus.subjects){
-        if(levenshtein(qq, s.toLowerCase()) <= Math.max(1, Math.floor(qq.length*0.35)) && name.includes(s.toLowerCase().slice(0,1))){
-          slot.classList.add("search-highlight");
-          matches++; break;
-        }
       }
     });
+    
     countEl.textContent = `${matches} match${matches===1? "":"es"}`;
+    
+    // Scroll to first match if any found
+    if(matches > 0){
+      const firstMatch = document.querySelector(".slot.search-highlight");
+      if(firstMatch){
+        firstMatch.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center',
+          inline: 'nearest'
+        });
+      }
+    }
   }
 
-  // on input: show suggestions and highlight as user types (but don't be too aggressive)
+  // on input: show suggestions and highlight as user types
   let inputTimer = null;
   input.addEventListener("input", (e) => {
     const v = e.target.value;
     showSuggestions(v);
     clearTimeout(inputTimer);
-    inputTimer = setTimeout(()=> doSearchAndHighlight(v), 250);
+    inputTimer = setTimeout(()=> doSearchAndHighlight(v), 300);
+  });
+
+  // Enter key to search
+  input.addEventListener("keypress", (e) => {
+    if(e.key === 'Enter'){
+      doSearchAndHighlight(input.value);
+      suggestionsBox.hidden = true;
+    }
   });
 
   clearBtn.addEventListener("click", () => {
@@ -1229,13 +1340,11 @@ populateDaySelects();
   });
 
   // When the timetable is re-rendered, re-apply last query highlights.
-  // We use a MutationObserver on the #results area to detect re-render.
   let lastQuery = "";
   input.addEventListener("blur", ()=> lastQuery = input.value);
   input.addEventListener("change", ()=> lastQuery = input.value);
 
   const obs = new MutationObserver(() => {
-    // small timeout to let DOM settle
     setTimeout(() => {
       const q = input.value || lastQuery;
       if(q && q.trim()) doSearchAndHighlight(q);
@@ -1251,7 +1360,6 @@ populateDaySelects();
   });
 
   // If user switches to Results step programmatically, attempt to re-apply highlight
-  // (in case the results were rendered previously)
   const originalShowStep = showStep;
   window.showStep = function(n){
     originalShowStep(n);
@@ -1262,6 +1370,18 @@ populateDaySelects();
       }, 50);
     }
   };
+
+  // Add CSS for the highlight (in case you want to customize further)
+  const style = document.createElement('style');
+  style.textContent = `
+    .slot.search-highlight {
+      border: 2px solid #ff0000 !important;
+      box-shadow: 0 0 8px rgba(255, 0, 0, 0.5) !important;
+      z-index: 10;
+      position: relative;
+    }
+  `;
+  document.head.appendChild(style);
 })();
 
 
@@ -1451,19 +1571,33 @@ populateDaySelects();
     `;
     document.head.appendChild(style);
 
+    // Convert minutes to hours and minutes format
+    function formatMinutes(totalMinutes) {
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        
+        if (hours === 0) {
+            return `${minutes}m`;
+        } else if (minutes === 0) {
+            return `${hours}h`;
+        } else {
+            return `${hours}h ${minutes}m`;
+        }
+    }
+
     // Calculate faculty workload
     function calculateFacultyWorkload(facultyId) {
         if (!state.solution || !state.solution.byBatch) {
-            return { hours: 0, sessions: 0, averagePerDay: 0 };
+            return { minutes: 0, sessions: 0, averagePerDay: 0 };
         }
 
-        let totalHours = 0;
+        let totalMinutes = 0;
         let totalSessions = 0;
         const daysWorked = new Set();
-        const dailyHours = {};
+        const dailyMinutes = {};
 
-        // Initialize daily hours
-        state.days.forEach(day => dailyHours[day] = 0);
+        // Initialize daily minutes
+        state.days.forEach(day => dailyMinutes[day] = 0);
 
         // Calculate from assignments
         Object.values(state.solution.byBatch).forEach(assignments => {
@@ -1471,41 +1605,40 @@ populateDaySelects();
                 if (assignment.facultyId === facultyId) {
                     const timeslot = state.solution.timeslots.find(ts => ts.id === assignment.timeslotId);
                     if (timeslot && !timeslot.isBreak) {
-                        const slotHours = state.slotLength / 60; // Convert minutes to hours
-                        totalHours += slotHours;
+                        totalMinutes += state.slotLength;
                         totalSessions++;
                         daysWorked.add(timeslot.day);
-                        dailyHours[timeslot.day] += slotHours;
+                        dailyMinutes[timeslot.day] += state.slotLength;
                     }
                 }
             });
         });
 
-        const averagePerDay = totalHours / Math.max(daysWorked.size, 1);
+        const averagePerDay = totalMinutes / Math.max(daysWorked.size, 1);
         
         return {
-            hours: Math.round(totalHours * 10) / 10,
+            minutes: totalMinutes,
             sessions: totalSessions,
             daysWorked: daysWorked.size,
-            averagePerDay: Math.round(averagePerDay * 10) / 10,
-            dailyHours: dailyHours
+            averagePerDay: Math.round(averagePerDay),
+            dailyMinutes: dailyMinutes
         };
     }
 
-    // Get workload level
-    function getWorkloadLevel(hours) {
-        if (hours === 0) return 'none';
-        if (hours <= 15) return 'low';
-        if (hours <= 25) return 'medium';
-        if (hours <= 35) return 'high';
+    // Get workload level (converted thresholds to minutes)
+    function getWorkloadLevel(minutes) {
+        if (minutes === 0) return 'none';
+        if (minutes <= 15 * 60) return 'low';      // 15 hours = 900 minutes
+        if (minutes <= 25 * 60) return 'medium';   // 25 hours = 1500 minutes
+        if (minutes <= 35 * 60) return 'high';     // 35 hours = 2100 minutes
         return 'over';
     }
 
     // Create workload visualization
     function createWorkloadVisualization(faculty) {
         const workload = calculateFacultyWorkload(faculty.id);
-        const level = getWorkloadLevel(workload.hours);
-        const percentage = Math.min((workload.hours / 40) * 100, 100); // Cap at 40 hours for visualization
+        const level = getWorkloadLevel(workload.minutes);
+        const percentage = Math.min((workload.minutes / (40 * 60)) * 100, 100); // Cap at 40 hours (2400 minutes) for visualization
         
         const container = document.createElement('div');
         container.className = 'workload-container';
@@ -1514,7 +1647,7 @@ populateDaySelects();
             <div class="workload-header">
                 <span class="workload-title">Workload Analysis</span>
                 <span style="color: ${level === 'over' ? '#ef4444' : level === 'high' ? '#f59e0b' : level === 'medium' ? '#10b981' : '#94a3b8'}">
-                    ${level.toUpperCase()} • ${workload.hours}h/week
+                    ${level.toUpperCase()} • ${formatMinutes(workload.minutes)}/week
                 </span>
             </div>
             
@@ -1528,7 +1661,7 @@ populateDaySelects();
                     <span class="workload-stat-label">Days</span>
                 </div>
                 <div class="workload-stat">
-                    <span class="workload-stat-value">${workload.averagePerDay}h</span>
+                    <span class="workload-stat-value">${formatMinutes(workload.averagePerDay)}</span>
                     <span class="workload-stat-label">Avg/Day</span>
                 </div>
             </div>
@@ -1538,9 +1671,9 @@ populateDaySelects();
             </div>
             
             <div class="workload-thresholds">
-                <div class="workload-threshold" style="left: 37.5%" data-value="15h"></div>
-                <div class="workload-threshold" style="left: 62.5%" data-value="25h"></div>
-                <div class="workload-threshold" style="left: 87.5%" data-value="35h"></div>
+                <div class="workload-threshold" style="left: 37.5%" data-value="${formatMinutes(15 * 60)}"></div>
+                <div class="workload-threshold" style="left: 62.5%" data-value="${formatMinutes(25 * 60)}"></div>
+                <div class="workload-threshold" style="left: 87.5%" data-value="${formatMinutes(35 * 60)}"></div>
             </div>
             
             <div class="workload-labels">
@@ -1572,10 +1705,10 @@ populateDaySelects();
                 </div>
             `}
             
-            ${workload.hours > 0 ? `
+            ${workload.minutes > 0 ? `
                 <div style="margin-top: 10px; font-size: 11px; color: var(--muted);">
                     <strong>Daily Distribution:</strong> 
-                    ${state.days.map(day => `${day}: ${workload.dailyHours[day]}h`).join(' • ')}
+                    ${state.days.map(day => `${day}: ${formatMinutes(workload.dailyMinutes[day])}`).join(' • ')}
                 </div>
             ` : ''}
         `;
@@ -1663,7 +1796,7 @@ populateDaySelects();
         
         state.faculties.forEach(faculty => {
             const workload = calculateFacultyWorkload(faculty.id);
-            const level = getWorkloadLevel(workload.hours);
+            const level = getWorkloadLevel(workload.minutes);
             
             summaryHTML += `
                 <div class="minicard" style="border-left: 4px solid ${
@@ -1672,8 +1805,8 @@ populateDaySelects();
                     level === 'medium' ? '#10b981' : '#94a3b8'
                 };">
                     <div class="title">${faculty.name}</div>
-                    <div class="meta">${workload.hours}h/week • ${workload.sessions} sessions</div>
-                    <div class="meta">${workload.daysWorked} days • ${workload.averagePerDay}h/day avg</div>
+                    <div class="meta">${formatMinutes(workload.minutes)}/week • ${workload.sessions} sessions</div>
+                    <div class="meta">${workload.daysWorked} days • ${formatMinutes(workload.averagePerDay)}/day avg</div>
                     <div style="margin-top: 8px; font-size: 12px; color: ${
                         level === 'over' ? '#ef4444' : 
                         level === 'high' ? '#f59e0b' : 
@@ -1703,7 +1836,6 @@ populateDaySelects();
 
     console.log('Faculty Workload Visualization loaded successfully!');
 })();
-
 
 
 
