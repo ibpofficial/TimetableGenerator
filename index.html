@@ -19,8 +19,19 @@
       <button id="btnLoadConfig" class="ghost">Load</button>
       <button id="btnSaveConfig" class="ghost">Save</button>
       <button id="btnReset" class="danger ghost">Reset</button>
+      <nav class="actions">
+  <!-- NEW: Memory toggle button -->
+  <button id="btnMemory" class="ghost memory-toggle" aria-pressed="false">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="label">Memory: OFF</span>
+  </button>
+
+  
+</nav>
+
     </nav>
   </header>
+  
 
   <main class="container">
     <aside class="sidebar">
@@ -37,6 +48,7 @@
         <strong>Tip:</strong> You can save and load your setup anytime.
       </div>
     </aside>
+   
 
     <section class="content">
       <!-- STEP 1 -->
@@ -94,7 +106,28 @@
           <button class="primary next">Next</button>
         </div>
       </section>
+ <!-- === AI GLOBAL SEARCH + SUGGESTIONS MARQUEE === -->
+    <div class="ai-topbar">
+      <div class="ai-search">
+        <input id="aiSearchInput" type="search" placeholder="Ask me anything about this timetable setup… (e.g., 'Why did labs fail?')" autocomplete="off" />
+        <button id="aiSearchBtn" class="ghost">Ask</button>
+      </div>
+      <marquee id="aiSuggestionsMarquee" behavior="scroll" direction="left" class="ai-marquee" scrollamount="6">💡 Tips will appear here after generation.</marquee>
+    </div>
+        <!-- AI ANSWERS + MINIMAL EDITS -->
+        <div id="aiAnswerWrap" class="card" style="display:none;">
+          <h3>Assistant</h3>
+          <div id="aiAnswer" class="ai-answer"></div>
+        </div>
 
+        <div id="aiMinimalEditsWrap" class="card" style="display:none;">
+          <h3>Smart Fix Suggestions (Minimal Edits)</h3>
+          <ol id="aiMinimalEditsList" class="ai-edits"></ol>
+          <div class="row">
+            <button id="aiApplyAll" class="secondary">Apply Top Suggestion</button>
+          </div>
+        </div>
+        
       <!-- STEP 2 -->
       <section class="step" data-step="2" hidden>
         <h2>Step 2 — Batches</h2>
@@ -326,11 +359,13 @@
   </main>
 
   <footer class="footer">
-    <span>© 2025 IBP Timetable Generator • NEP 2020 ready</span>
+    <span>© 2026 IBP Timetable Generator • NEP 2020 ready</span>
     <a href="#" id="sampleData">Load sample data</a>
   </footer>
 
   <script src="app.js"></script>
 </body>
 </html>
+
+
 
