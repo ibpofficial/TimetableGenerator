@@ -3,6 +3,13 @@
    No external libraries required.
 */
 
+// in the whole code i made some gaps soo i can recognise diffrent code section more easily 
+
+
+
+
+
+
 // ---------- State ----------
 const state = {
   days: ["Mon","Tue","Wed","Thu","Fri"],
